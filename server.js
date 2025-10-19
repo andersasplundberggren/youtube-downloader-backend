@@ -19,6 +19,11 @@ app.use(cors({
 app.use(express.json());
 app.use(express.static('public'));
 
+// Skapa agent för att undvika bot-detektion
+const agent = ytdl.createAgent(undefined, {
+    localAddress: undefined
+});
+
 app.post('/download', async (req, res) => {
     try {
         const { url, type, quality } = req.body;
@@ -33,31 +38,23 @@ app.post('/download', async (req, res) => {
 
         console.log(`Laddar ner: ${url} (${type}, ${quality})`);
 
-        const info = await ytdl.getInfo(url);
-        const title = info.videoDetails.title.replace(/[^\w\s-]/g, '');
+        const info = await ytdl.getInfo(url, { agent });
+        const title = info.videoDetails.title.replace(/[^\w\s-]/g, '').substring(0, 100);
 
-        let downloadOptions = {};
+        let downloadOptions = {
+            agent
+        };
 
         if (type === 'audio') {
-            downloadOptions = {
-                quality: 'highestaudio',
-                filter: 'audioonly'
-            };
+            downloadOptions.quality = 'highestaudio';
+            downloadOptions.filter = 'audioonly';
             res.setHeader('Content-Disposition', `attachment; filename="${title}.mp3"`);
             res.setHeader('Content-Type', 'audio/mpeg');
         } else {
-            // För video, välj kvalitet baserat på användarens val
-            let qualityLabel = '720p';
-            switch(quality) {
-                case 'highest': qualityLabel = '1080p'; break;
-                case 'high': qualityLabel = '720p'; break;
-                case 'medium': qualityLabel = '480p'; break;
-                case 'low': qualityLabel = '360p'; break;
-            }
-
-            downloadOptions = {
-                quality: qualityLabel,
-                filter: format => format.container === 'mp4' && format.hasVideo && format.hasAudio
+            // För video med ljud
+            downloadOptions.quality = 'highest';
+            downloadOptions.filter = format => {
+                return format.hasVideo && format.hasAudio;
             };
             res.setHeader('Content-Disposition', `attachment; filename="${title}.mp4"`);
             res.setHeader('Content-Type', 'video/mp4');
@@ -68,7 +65,7 @@ app.post('/download', async (req, res) => {
         stream.on('error', (error) => {
             console.error('Stream error:', error);
             if (!res.headersSent) {
-                res.status(500).json({ error: 'Nedladdning misslyckades' });
+                res.status(500).json({ error: error.message || 'Nedladdning misslyckades' });
             }
         });
 
@@ -90,7 +87,7 @@ app.get('/info', async (req, res) => {
             return res.status(400).json({ error: 'Ogiltig URL' });
         }
 
-        const info = await ytdl.getInfo(url);
+        const info = await ytdl.getInfo(url, { agent });
         
         res.json({
             title: info.videoDetails.title,
